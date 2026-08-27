@@ -1,25 +1,33 @@
-# VeloDB MCP Query Skill
+# Doris MCP Query Reference
 
-> You are reading this because you called `get_query_guide()`. All tool-calling rules below are mandatory — follow them strictly.
+> Choose the query path from the user's intent. Semantic workspaces load only
+> when a semantic tool or the Semantic Web UI is used.
+> This guide is fetched once per conversation context. Reuse it for follow-up
+> queries instead of calling `get_query_guide` again.
 
 ## tl;dr — The Six Essential Tools
 
 ```
-get_query_guide()                        → you are here (already called)
-check_service_health()                   → which workspace is healthy?
+get_query_guide()                        → call once per conversation context
+check_service_health()                   → Doris and already-loaded semantic health
 list_metrics(workspace)                  → what can I ask?
 list_dimensions_for_metric(workspace, name) → how can I slice it?
 query_metric(workspace, metrics, ...)    → give me the data
-execute_query(sql, ...)                  → raw SQL, last resort only
+execute_query(sql, ...)                  → strictly read-only Doris SQL
 ```
 
-`workspace` is required for the first three. Use `"example"` for the built-in sample.
+`workspace` is required for the three semantic metric tools. Use `"example"` for the built-in sample.
+
+Call `get_query_guide` again only when starting a new conversation or when a
+context reset/compaction removed this guide. Changing databases, workspaces, or
+query paths within the same context does not require another call.
 
 ---
 
-## Step 0: Check Health (ALWAYS SECOND — get_query_guide was already called)
+## Step 0: Check Health
 
-Call this immediately after receiving this guide:
+Call this when connectivity or already-loaded semantic status is useful. It
+does not discover, compile, or load semantic workspaces.
 
 ```
 check_service_health()
@@ -29,20 +37,23 @@ Returns:
 
 ```json
 {
-  "velodb": "connected",
+  "doris": "connected",
   "workspaces": {
-    "example":   {"status": "healthy",    "metric_count": 5},
+    "example":   {"status": "healthy",    "metric_count": 5, "semantic_enabled": true, "semantic_version": 12, "loaded_version": 12},
     "marketing": {"status": "no_models",  "message": "No YAML files"},
-    "finance":   {"status": "not_ready",  "message": "Files present but failed to load"}
+    "finance":   {"status": "disabled", "semantic_enabled": false, "semantic_version": 7, "loaded_version": 6}
   }
 }
 ```
 
-**Rules:**
-- Pick a workspace with `status: "healthy"` — only `query_metric` works there.
+**Semantic-query rules:**
+- Pick a workspace with `status: "healthy"` before calling `query_metric`.
 - If the user mentions a specific workspace, use it. Otherwise use `"example"`.
-- If `velodb` is `"unavailable"`, warn the user. `list_databases` / `execute_query` may still work.
-- If NO workspace is healthy → fall back to raw SQL path (see bottom).
+- If `doris` is `"unavailable"`, warn the user. `list_databases` / `execute_query` may still work.
+- Calling a semantic tool loads only its requested workspace on demand.
+- Do not initialize semantic workspaces unless the chosen query path needs them.
+- `status: "disabled"` means semantic MCP tools are unavailable for that workspace; use read-only SQL or ask a Doris `admin` role user to enable **Semantic queries** in Web UI.
+- Every semantic tool checks the published workspace version and reloads before querying when `semantic_version` differs from `loaded_version`.
 
 ---
 
@@ -56,10 +67,10 @@ Returns:
 {
   "data": [
     {"name": "total_amount", "description": "Total order amount"},
-    {"name": "order_count",   "description": "Number of orders"},
+    {"name": "order_count",   "description": "Order count"},
     {"name": "avg_amount",    "description": "Average order value"},
-    {"name": "unique_users",  "description": "Users who placed orders"},
-    {"name": "user_count",    "description": "Number of users"}
+    {"name": "unique_users",  "description": "Ordering users"},
+    {"name": "user_count",    "description": "User count"}
   ],
   "meta": {"total_count": 5}
 }
@@ -67,12 +78,14 @@ Returns:
 
 **How to match user intent to a metric:**
 - "sales / revenue / GMV" → `total_amount`
-- "order volume / transactions" → `order_count`
+- "orders / transactions" → `order_count`
 - "average order value / AOV" → `avg_amount`
-- "ordering users / buyers" → `unique_users`
-- "user count" → `user_count`
+- "ordering users / purchasing users" → `unique_users`
+- "users / customer count" → `user_count`
 
-If the user's question doesn't clearly match any metric, call `list_metrics` and scan all descriptions. If nothing matches, fall back to raw SQL.
+When using the semantic path, if the user's question does not clearly match a
+metric, call `list_metrics` and scan the descriptions. If nothing matches, use
+the read-only SQL path.
 
 ---
 
@@ -85,13 +98,13 @@ If the user's question doesn't clearly match any metric, call `list_metrics` and
 // Response
 {
   "data": [
-    {"name": "order_date",    "type": "time",        "description": "Order date (by day)"},
+    {"name": "order_date",    "type": "time",        "description": "Order date (day grain)"},
     {"name": "channel",       "type": "categorical", "description": "Order channel"},
     {"name": "status",        "type": "categorical", "description": "Order status"},
     {"name": "city",          "type": "categorical", "description": "City"},
-    {"name": "level",         "type": "categorical", "description": "Level"},
+    {"name": "level",         "type": "categorical", "description": "Customer level"},
     {"name": "register_date", "type": "time",        "description": "Registration date"},
-    {"name": "category",      "type": "categorical", "description": "Category"},
+    {"name": "category",      "type": "categorical", "description": "Product category"},
     {"name": "brand",         "type": "categorical", "description": "Brand"}
   ],
   "meta": {"metric": "total_amount", "count": 8}
@@ -119,7 +132,7 @@ If the user's question doesn't clearly match any metric, call `list_metrics` and
 | `order_by` | list[string] | No | `[]` | `-` prefix = DESC, e.g. `["-total_amount"]` |
 | `limit` | int | No | `0` | Max rows. `0` = no limit |
 | `having` | string | No | `""` | Filter on aggregated value, e.g. `"total_amount > 1000"` |
-| `database` | string | No | `""` | Target VeloDB database (auto-detected if empty) |
+| `database` | string | No | `""` | Target Doris database (auto-detected if empty) |
 | `max_rows` | int | No | `0` | Hard row cap for execution. `0` = server default (10,000) |
 
 ### Response
@@ -183,7 +196,7 @@ order_by=["-total_amount", "channel"]  # multi-column
 // "Sales by channel"
 {"workspace": "example", "metrics": ["total_amount"], "group_by": ["channel"]}
 
-// "Daily order volume trend for February"
+// "Daily order trend in February"
 {"workspace": "example", "metrics": ["order_count"], "group_by": ["order_date"],
  "where": "order_date >= '2026-02-01' AND order_date <= '2026-02-28'",
  "order_by": ["order_date"]}
@@ -192,32 +205,24 @@ order_by=["-total_amount", "channel"]  # multi-column
 {"workspace": "example", "metrics": ["total_amount"], "group_by": ["channel"],
  "order_by": ["-total_amount"], "limit": 3}
 
-// "Channel distribution of completed orders"
+// "Channel distribution for completed orders"
 {"workspace": "example", "metrics": ["total_amount", "order_count"],
  "group_by": ["channel"], "where": "status = 'completed'"}
 
-// "Sales by brand, only the strong sellers"
+// "Sales by brand, showing only strong sellers"
 {"workspace": "example", "metrics": ["total_amount"], "group_by": ["brand"],
  "order_by": ["-total_amount"], "having": "total_amount > 500"}
 ```
 
 ---
 
-## When to Use Raw SQL (execute_query)
+## When to Use Read-only SQL (`execute_query`)
 
-**Only two scenarios justify `execute_query`:**
+- Use it directly for explicit SQL, Doris full-text search, or physical-schema exploration.
+- Use it when the semantic layer is unavailable or has no matching metric.
+- No semantic health check is required before the raw SQL path.
 
-### Scenario A — Semantic Layer Unavailable
-`check_service_health` returns NO workspace with `status: "healthy"`.
-
-### Scenario B — No Matching Metric
-Semantic layer IS healthy, but `list_metrics` shows nothing matching the user's intent.
-
-**CRITICAL RULE — NEVER skip the semantic layer when it can serve the query:**
-- If `check_service_health` shows at least one `healthy` workspace AND `list_metrics` has a matching metric → you MUST use `query_metric`. Do NOT write raw SQL.
-- Only fall back to `execute_query` when the semantic layer truly cannot help (Scenario A or B above).
-
-**In either case, follow this fallback path:**
+The SQL path is:
 
 ### Fallback: Raw SQL
 
@@ -228,7 +233,7 @@ describe_table(database="dw", table="orders") → check columns
 execute_query(sql="SELECT ... FROM dw.orders ...")
 ```
 
-**ALWAYS warn the user before using raw SQL:**
+When falling back from governed metrics to raw SQL, warn:
 
 > "No semantic metrics match your query. Results below come from raw SQL and may have incorrect aggregation or duplicate counting. Use with caution."
 
@@ -238,9 +243,8 @@ execute_query(sql="SELECT ... FROM dw.orders ...")
 
 | ❌ Don't | ✅ Do |
 |----------|------|
-| Skip `get_query_guide` or `check_service_health` | Always call them first — they tell you which workspace to use |
 | Forget `workspace` parameter | Every semantic tool requires it |
-| Use raw SQL when metrics exist | `list_metrics` → `query_metric` is always preferred |
+| Load semantics without need | Use semantic tools only when that path is chosen |
 | Call `query_metric` before checking dimensions | `list_dimensions_for_metric` first to verify `group_by` values |
 | Write `having='{"x": 10}'` (JSON) | `having` takes plain SQL: `"x > 10"` |
 | Use `describe_table` to plan metric queries | Use `list_metrics` — metrics handle joins automatically |

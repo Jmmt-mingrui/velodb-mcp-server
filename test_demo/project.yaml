@@ -1,6 +1,0 @@
-time_config:
-  calendar:
-    - table: system_mcp.dim_date
-      column: date_id
-      grain: day
-      
